@@ -15,9 +15,7 @@
 (define-constant err-invalid-pool-id (err u110))
 (define-constant err-invalid-claim-amount (err u111))
 
-;; Define data variables
-(define-data-var initialized bool false)
-(define-data-var pool-count uint u0)
+
 
 ;; Define data maps
 (define-map pools
