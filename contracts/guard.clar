@@ -9,9 +9,13 @@
 (define-constant err-insufficient-funds (err u104))
 (define-constant err-not-member (err u105))
 (define-constant err-claim-not-found (err u106))
+(define-constant err-invalid-name (err u107))
+(define-constant err-invalid-premium (err u108))
+(define-constant err-invalid-coverage (err u109))
 
 ;; Define data variables
 (define-data-var initialized bool false)
+(define-data-var pool-count uint u0)
 
 ;; Define data maps
 (define-map pools
@@ -47,19 +51,33 @@
 
 ;; Create a new insurance pool
 (define-public (create-pool (name (string-ascii 50)) (premium uint) (coverage uint))
-  (let ((pool-id (+ (len (map-keys pools)) u1)))
+  (begin
+    ;; Check if the contract is initialized
     (asserts! (var-get initialized) err-not-initialized)
-    (map-set pools
-      { pool-id: pool-id }
-      {
-        name: name,
-        balance: u0,
-        premium: premium,
-        coverage: coverage,
-        members: (list)
-      }
+    
+    ;; Validate name (non-empty)
+    (asserts! (> (len name) u0) err-invalid-name)
+    
+    ;; Validate premium (greater than zero)
+    (asserts! (> premium u0) err-invalid-premium)
+    
+    ;; Validate coverage (greater than premium)
+    (asserts! (> coverage premium) err-invalid-coverage)
+    
+    (let ((new-pool-id (+ (var-get pool-count) u1)))
+      (map-set pools
+        { pool-id: new-pool-id }
+        {
+          name: name,
+          balance: u0,
+          premium: premium,
+          coverage: coverage,
+          members: (list)
+        }
+      )
+      (var-set pool-count new-pool-id)
+      (ok new-pool-id)
     )
-    (ok pool-id)
   )
 )
 
@@ -85,7 +103,7 @@
 (define-public (file-claim (pool-id uint) (amount uint))
   (let (
     (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
-    (claim-id (+ (len (map-keys claims)) u1))
+    (claim-id (+ (var-get pool-count) u1))
   )
     (asserts! (is-some (index-of (get members pool) tx-sender)) err-not-member)
     (asserts! (<= amount (get coverage pool)) err-insufficient-funds)
@@ -98,6 +116,7 @@
         status: "pending"
       }
     )
+    (var-set pool-count claim-id)
     (ok claim-id)
   )
 )
