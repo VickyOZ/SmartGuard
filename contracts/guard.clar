@@ -1,4 +1,4 @@
-;; Decentralized Insurance Protocol
+;; Decentralized Insurance Protocol with Pool Administrator Role
 
 ;; Define constants
 (define-constant contract-owner tx-sender)
@@ -14,6 +14,7 @@
 (define-constant err-invalid-coverage (err u109))
 (define-constant err-invalid-pool-id (err u110))
 (define-constant err-invalid-claim-amount (err u111))
+(define-constant err-not-admin (err u112))
 
 ;; Define data variables
 (define-data-var initialized bool false)
@@ -27,7 +28,8 @@
     balance: uint,
     premium: uint,
     coverage: uint,
-    members: (list 200 principal)
+    members: (list 200 principal),
+    admin: principal
   }
 )
 
@@ -52,7 +54,7 @@
 )
 
 ;; Create a new insurance pool
-(define-public (create-pool (name (string-ascii 50)) (premium uint) (coverage uint))
+(define-public (create-pool (name (string-ascii 50)) (premium uint) (coverage uint) (admin principal))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
     (asserts! (> (len name) u0) err-invalid-name)
@@ -67,7 +69,8 @@
           balance: u0,
           premium: premium,
           coverage: coverage,
-          members: (list)
+          members: (list),
+          admin: admin
         }
       )
       (var-set pool-count new-pool-id)
@@ -76,8 +79,8 @@
   )
 )
 
-;; Join an insurance pool
-(define-public (join-pool (pool-id uint))
+;; Join an insurance pool (now requires admin approval)
+(define-public (request-join-pool (pool-id uint))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
     (asserts! (> pool-id u0) err-invalid-pool-id)
@@ -88,11 +91,24 @@
       (premium (get premium pool))
     )
       (asserts! (is-eq (stx-transfer? premium tx-sender (as-contract tx-sender)) (ok true)) err-insufficient-funds)
+      (ok true)
+    )
+  )
+)
+
+;; Approve join request (admin only)
+(define-public (approve-join-request (pool-id uint) (new-member principal))
+  (begin
+    (asserts! (var-get initialized) err-not-initialized)
+    (let (
+      (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
+    )
+      (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
       (map-set pools
         { pool-id: pool-id }
         (merge pool {
-          balance: (+ (get balance pool) premium),
-          members: (unwrap! (as-max-len? (append (get members pool) tx-sender) u200) err-pool-not-found)
+          balance: (+ (get balance pool) (get premium pool)),
+          members: (unwrap! (as-max-len? (append (get members pool) new-member) u200) err-pool-not-found)
         })
       )
       (ok true)
@@ -129,7 +145,7 @@
   )
 )
 
-;; Process a claim (simplified for demonstration)
+;; Process a claim (now admin only)
 (define-public (process-claim (claim-id uint) (approve bool))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
@@ -140,7 +156,7 @@
       (claim (unwrap! (map-get? claims { claim-id: claim-id }) err-claim-not-found))
       (pool (unwrap! (map-get? pools { pool-id: (get pool-id claim) }) err-pool-not-found))
     )
-      (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+      (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
       (if approve
         (begin
           (asserts! (>= (get balance pool) (get amount claim)) err-insufficient-funds)
@@ -173,5 +189,22 @@
     (asserts! (> claim-id u0) err-invalid-pool-id)
     (asserts! (<= claim-id (var-get pool-count)) err-claim-not-found)
     (ok (unwrap! (map-get? claims { claim-id: claim-id }) err-claim-not-found))
+  )
+)
+
+;; Change pool administrator
+(define-public (change-pool-admin (pool-id uint) (new-admin principal))
+  (begin
+    (asserts! (var-get initialized) err-not-initialized)
+    (let (
+      (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
+    )
+      (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
+      (map-set pools
+        { pool-id: pool-id }
+        (merge pool { admin: new-admin })
+      )
+      (ok true)
+    )
   )
 )
