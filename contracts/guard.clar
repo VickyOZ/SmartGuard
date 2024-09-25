@@ -15,6 +15,7 @@
 (define-constant err-invalid-pool-id (err u110))
 (define-constant err-invalid-claim-amount (err u111))
 (define-constant err-not-admin (err u112))
+(define-constant err-invalid-admin (err u113))
 
 ;; Define data variables
 (define-data-var initialized bool false)
@@ -100,6 +101,8 @@
 (define-public (approve-join-request (pool-id uint) (new-member principal))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
+    (asserts! (> pool-id u0) err-invalid-pool-id)
+    (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
     (let (
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
     )
@@ -196,6 +199,8 @@
 (define-public (change-pool-admin (pool-id uint) (new-admin principal))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
+    (asserts! (> pool-id u0) err-invalid-pool-id)
+    (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
     (let (
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
     )
