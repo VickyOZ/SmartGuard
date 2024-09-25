@@ -61,7 +61,10 @@
     (asserts! (> (len name) u0) err-invalid-name)
     (asserts! (> premium u0) err-invalid-premium)
     (asserts! (> coverage premium) err-invalid-coverage)
-    
+
+    ;; Check if the admin is a valid principal (non-zero principal)
+    (asserts! (not (is-eq admin tx-sender)) err-invalid-admin)
+
     (let ((new-pool-id (+ (var-get pool-count) u1)))
       (map-set pools
         { pool-id: new-pool-id }
@@ -103,10 +106,15 @@
     (asserts! (var-get initialized) err-not-initialized)
     (asserts! (> pool-id u0) err-invalid-pool-id)
     (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
+
     (let (
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
     )
       (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
+
+      ;; Validate new-member principal
+      (asserts! (not (is-eq new-member tx-sender)) err-invalid-admin)
+
       (map-set pools
         { pool-id: pool-id }
         (merge pool {
@@ -201,6 +209,10 @@
     (asserts! (var-get initialized) err-not-initialized)
     (asserts! (> pool-id u0) err-invalid-pool-id)
     (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
+
+    ;; Validate new-admin principal
+    (asserts! (not (is-eq new-admin tx-sender)) err-invalid-admin)
+
     (let (
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
     )
