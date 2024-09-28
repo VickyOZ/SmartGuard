@@ -1,4 +1,4 @@
-;; Decentralized Insurance Protocol with Enhanced Pool Membership Management
+;; Decentralized Insurance Protocol with Pool Administrator Role, Comprehensive Event Logging, and Enhanced Claim Management
 
 ;; Define constants
 (define-constant contract-owner tx-sender)
@@ -19,8 +19,6 @@
 (define-constant err-event-not-found (err u114))
 (define-constant err-claim-period-expired (err u115))
 (define-constant err-invalid-claim-period (err u116))
-(define-constant err-already-member (err u117))
-(define-constant err-member-not-found (err u118))
 
 ;; Define data variables
 (define-data-var initialized bool false)
@@ -37,8 +35,8 @@
     coverage: uint,
     members: (list 200 principal),
     admin: principal,
-    claim-period: uint,
-    created-at: uint
+    claim-period: uint,  ;; Claim period in seconds
+    created-at: uint     ;; Block time when pool was created
   }
 )
 
@@ -49,7 +47,7 @@
     claimant: principal,
     amount: uint,
     status: (string-ascii 20),
-    created-at: uint
+    created-at: uint  ;; Block time when claim was created
   }
 )
 
@@ -142,7 +140,6 @@
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
       (premium (get premium pool))
     )
-      (asserts! (not (is-some (index-of (get members pool) tx-sender))) err-already-member)
       (asserts! (is-eq (stx-transfer? premium tx-sender (as-contract tx-sender)) (ok true)) err-insufficient-funds)
       (log-event "request-join-pool" (some pool-id) none (some tx-sender) none)
       (ok true)
@@ -162,7 +159,6 @@
     )
       (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
       (asserts! (not (is-eq new-member tx-sender)) err-invalid-admin)
-      (asserts! (not (is-some (index-of (get members pool) new-member))) err-already-member)
 
       (map-set pools
         { pool-id: pool-id }
@@ -172,34 +168,6 @@
         })
       )
       (log-event "approve-join" (some pool-id) none (some new-member) none)
-      (ok true)
-    )
-  )
-)
-
-;; Remove a member from the pool (admin only)
-(define-public (remove-member (pool-id uint) (member-to-remove principal))
-  (begin
-    (asserts! (var-get initialized) err-not-initialized)
-    (asserts! (> pool-id u0) err-invalid-pool-id)
-    (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
-
-    (let (
-      (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
-      (member-index (unwrap! (index-of (get members pool) member-to-remove) err-member-not-found))
-    )
-      (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
-      
-      (map-set pools
-        { pool-id: pool-id }
-        (merge pool {
-          members: (unwrap! (as-max-len? (concat (slice (get members pool) u0 member-index)
-                                                 (slice (get members pool) (+ u1 member-index) (len (get members pool))))
-                                         u200)
-                            err-pool-not-found)
-        })
-      )
-      (log-event "remove-member" (some pool-id) none (some member-to-remove) none)
       (ok true)
     )
   )
