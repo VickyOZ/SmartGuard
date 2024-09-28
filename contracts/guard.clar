@@ -1,4 +1,4 @@
-;; Decentralized Insurance Protocol with Pool Administrator Role
+;; Decentralized Insurance Protocol with Pool Administrator Role and Comprehensive Event Logging
 
 ;; Define constants
 (define-constant contract-owner tx-sender)
@@ -16,10 +16,12 @@
 (define-constant err-invalid-claim-amount (err u111))
 (define-constant err-not-admin (err u112))
 (define-constant err-invalid-admin (err u113))
+(define-constant err-event-not-found (err u114))
 
 ;; Define data variables
 (define-data-var initialized bool false)
 (define-data-var pool-count uint u0)
+(define-data-var event-counter uint u0)
 
 ;; Define data maps
 (define-map pools
@@ -44,12 +46,46 @@
   }
 )
 
+(define-map events
+  { event-id: uint }
+  {
+    event-type: (string-ascii 20),
+    pool-id: (optional uint),
+    claim-id: (optional uint),
+    user: (optional principal),
+    amount: (optional uint)
+  }
+)
+
+;; Helper function to log events
+(define-private (log-event (event-type (string-ascii 20)) 
+                           (pool-id (optional uint)) 
+                           (claim-id (optional uint))
+                           (user (optional principal))
+                           (amount (optional uint)))
+  (let ((event-id (+ (var-get event-counter) u1)))
+    (var-set event-counter event-id)
+    (map-set events
+      { event-id: event-id }
+      {
+        event-type: event-type,
+        pool-id: pool-id,
+        claim-id: claim-id,
+        user: user,
+        amount: amount
+      }
+    )
+    event-id
+  )
+)
+
 ;; Initialize contract
 (define-public (initialize)
   (begin
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
     (asserts! (not (var-get initialized)) err-already-initialized)
     (var-set initialized true)
+    (log-event "initialize" none none none none)
     (ok true)
   )
 )
@@ -61,8 +97,6 @@
     (asserts! (> (len name) u0) err-invalid-name)
     (asserts! (> premium u0) err-invalid-premium)
     (asserts! (> coverage premium) err-invalid-coverage)
-
-    ;; Check if the admin is a valid principal (non-zero principal)
     (asserts! (not (is-eq admin tx-sender)) err-invalid-admin)
 
     (let ((new-pool-id (+ (var-get pool-count) u1)))
@@ -78,12 +112,13 @@
         }
       )
       (var-set pool-count new-pool-id)
+      (log-event "create-pool" (some new-pool-id) none (some admin) none)
       (ok new-pool-id)
     )
   )
 )
 
-;; Join an insurance pool (now requires admin approval)
+;; Request to join an insurance pool
 (define-public (request-join-pool (pool-id uint))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
@@ -95,6 +130,7 @@
       (premium (get premium pool))
     )
       (asserts! (is-eq (stx-transfer? premium tx-sender (as-contract tx-sender)) (ok true)) err-insufficient-funds)
+      (log-event "request-join-pool" (some pool-id) none (some tx-sender) none)
       (ok true)
     )
   )
@@ -111,8 +147,6 @@
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
     )
       (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
-
-      ;; Validate new-member principal
       (asserts! (not (is-eq new-member tx-sender)) err-invalid-admin)
 
       (map-set pools
@@ -122,6 +156,7 @@
           members: (unwrap! (as-max-len? (append (get members pool) new-member) u200) err-pool-not-found)
         })
       )
+      (log-event "approve-join" (some pool-id) none (some new-member) none)
       (ok true)
     )
   )
@@ -151,12 +186,13 @@
         }
       )
       (var-set pool-count claim-id)
+      (log-event "file-claim" (some pool-id) (some claim-id) (some tx-sender) (some amount))
       (ok claim-id)
     )
   )
 )
 
-;; Process a claim (now admin only)
+;; Process a claim (admin only)
 (define-public (process-claim (claim-id uint) (approve bool))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
@@ -177,9 +213,35 @@
           )
           (unwrap! (as-contract (stx-transfer? (get amount claim) tx-sender (get claimant claim))) err-insufficient-funds)
           (map-set claims { claim-id: claim-id } (merge claim { status: "approved" }))
+          (log-event "process-claim" (some (get pool-id claim)) (some claim-id) (some (get claimant claim)) (some (get amount claim)))
         )
-        (map-set claims { claim-id: claim-id } (merge claim { status: "rejected" }))
+        (begin
+          (map-set claims { claim-id: claim-id } (merge claim { status: "rejected" }))
+          (log-event "process-claim" (some (get pool-id claim)) (some claim-id) (some (get claimant claim)) none)
+        )
       )
+      (ok true)
+    )
+  )
+)
+
+;; Change pool administrator
+(define-public (change-pool-admin (pool-id uint) (new-admin principal))
+  (begin
+    (asserts! (var-get initialized) err-not-initialized)
+    (asserts! (> pool-id u0) err-invalid-pool-id)
+    (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
+    (asserts! (not (is-eq new-admin tx-sender)) err-invalid-admin)
+
+    (let (
+      (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
+    )
+      (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
+      (map-set pools
+        { pool-id: pool-id }
+        (merge pool { admin: new-admin })
+      )
+      (log-event "change-admin" (some pool-id) none (some new-admin) none)
       (ok true)
     )
   )
@@ -203,25 +265,16 @@
   )
 )
 
-;; Change pool administrator
-(define-public (change-pool-admin (pool-id uint) (new-admin principal))
+;; Get event information
+(define-read-only (get-event-info (event-id uint))
   (begin
-    (asserts! (var-get initialized) err-not-initialized)
-    (asserts! (> pool-id u0) err-invalid-pool-id)
-    (asserts! (<= pool-id (var-get pool-count)) err-pool-not-found)
-
-    ;; Validate new-admin principal
-    (asserts! (not (is-eq new-admin tx-sender)) err-invalid-admin)
-
-    (let (
-      (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
-    )
-      (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
-      (map-set pools
-        { pool-id: pool-id }
-        (merge pool { admin: new-admin })
-      )
-      (ok true)
-    )
+    (asserts! (> event-id u0) err-invalid-pool-id)
+    (asserts! (<= event-id (var-get event-counter)) err-event-not-found)
+    (ok (unwrap! (map-get? events { event-id: event-id }) err-event-not-found))
   )
+)
+
+;; Get total number of events
+(define-read-only (get-event-count)
+  (ok (var-get event-counter))
 )
