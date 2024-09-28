@@ -1,4 +1,4 @@
-;; Decentralized Insurance Protocol with Pool Administrator Role and Comprehensive Event Logging
+;; Decentralized Insurance Protocol with Pool Administrator Role, Comprehensive Event Logging, and Enhanced Claim Management
 
 ;; Define constants
 (define-constant contract-owner tx-sender)
@@ -17,6 +17,8 @@
 (define-constant err-not-admin (err u112))
 (define-constant err-invalid-admin (err u113))
 (define-constant err-event-not-found (err u114))
+(define-constant err-claim-period-expired (err u115))
+(define-constant err-invalid-claim-period (err u116))
 
 ;; Define data variables
 (define-data-var initialized bool false)
@@ -32,7 +34,9 @@
     premium: uint,
     coverage: uint,
     members: (list 200 principal),
-    admin: principal
+    admin: principal,
+    claim-period: uint,  ;; Claim period in seconds
+    created-at: uint     ;; Block time when pool was created
   }
 )
 
@@ -42,7 +46,8 @@
     pool-id: uint,
     claimant: principal,
     amount: uint,
-    status: (string-ascii 20)
+    status: (string-ascii 20),
+    created-at: uint  ;; Block time when claim was created
   }
 )
 
@@ -91,15 +96,19 @@
 )
 
 ;; Create a new insurance pool
-(define-public (create-pool (name (string-ascii 50)) (premium uint) (coverage uint) (admin principal))
+(define-public (create-pool (name (string-ascii 50)) (premium uint) (coverage uint) (admin principal) (claim-period uint))
   (begin
     (asserts! (var-get initialized) err-not-initialized)
     (asserts! (> (len name) u0) err-invalid-name)
     (asserts! (> premium u0) err-invalid-premium)
     (asserts! (> coverage premium) err-invalid-coverage)
     (asserts! (not (is-eq admin tx-sender)) err-invalid-admin)
+    (asserts! (> claim-period u0) err-invalid-claim-period)
 
-    (let ((new-pool-id (+ (var-get pool-count) u1)))
+    (let (
+      (new-pool-id (+ (var-get pool-count) u1))
+      (current-time (unwrap-panic (get-block-info? time u0)))
+    )
       (map-set pools
         { pool-id: new-pool-id }
         {
@@ -108,7 +117,9 @@
           premium: premium,
           coverage: coverage,
           members: (list),
-          admin: admin
+          admin: admin,
+          claim-period: claim-period,
+          created-at: current-time
         }
       )
       (var-set pool-count new-pool-id)
@@ -173,16 +184,19 @@
     (let (
       (pool (unwrap! (map-get? pools { pool-id: pool-id }) err-pool-not-found))
       (claim-id (+ (var-get pool-count) u1))
+      (current-time (unwrap-panic (get-block-info? time u0)))
     )
       (asserts! (is-some (index-of (get members pool) tx-sender)) err-not-member)
       (asserts! (<= amount (get coverage pool)) err-insufficient-funds)
+      (asserts! (<= current-time (+ (get created-at pool) (get claim-period pool))) err-claim-period-expired)
       (map-set claims
         { claim-id: claim-id }
         {
           pool-id: pool-id,
           claimant: tx-sender,
           amount: amount,
-          status: "pending"
+          status: "pending",
+          created-at: current-time
         }
       )
       (var-set pool-count claim-id)
@@ -202,8 +216,10 @@
     (let (
       (claim (unwrap! (map-get? claims { claim-id: claim-id }) err-claim-not-found))
       (pool (unwrap! (map-get? pools { pool-id: (get pool-id claim) }) err-pool-not-found))
+      (current-time (unwrap-panic (get-block-info? time u0)))
     )
       (asserts! (is-eq tx-sender (get admin pool)) err-not-admin)
+      (asserts! (<= current-time (+ (get created-at claim) (get claim-period pool))) err-claim-period-expired)
       (if approve
         (begin
           (asserts! (>= (get balance pool) (get amount claim)) err-insufficient-funds)
